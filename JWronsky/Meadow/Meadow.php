@@ -50,7 +50,7 @@ class Meadow
     {
         // if (!$this->isTemplateCached($template)) {
             $compiler = $this->getCompiler();
-            $code = $compiler->compile($template);
+            $code = $compiler->compile($template, null);
             // $this->cacheStore($code, $template);
         // } else {
             // $code = $this->cacheRead($template);

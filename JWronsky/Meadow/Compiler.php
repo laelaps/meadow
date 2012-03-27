@@ -11,17 +11,16 @@ class Compiler
     const TAG_DELIMITER_CLOSE = '}}';
     const TAG_DELIMITER_OPEN = '{{';
 
-    const GLOBAL_CONTEXT = 'c';
-    const GLOBAL_CONTEXT_UPPER = 'u';
-    const GLOBAL_FUNCTION = 'f';
-    const GLOBAL_IF = 'd';
-    const GLOBAL_ITERATOR = 'i';
-    const GLOBAL_KEY = 'k';
-    const GLOBAL_MACRO_DEFINE = 'm';
-    const GLOBAL_MACRO_INVOKE = 'n';
-    const GLOBAL_PRINT = 'p';
-    const GLOBAL_TEMPLATE = 't';
-    const GLOBAL_UNLESS = 'n';
+    const GLOBAL_CONTEXT = 'ctx';
+    const GLOBAL_CONTEXT_UPPER = 'utx';
+    const GLOBAL_FUNCTION = 'fun';
+    const GLOBAL_IF = 'ifd';
+    const GLOBAL_ITERATOR = 'itr';
+    const GLOBAL_KEY = 'key';
+    const GLOBAL_MACRO_DEFINE = 'def';
+    const GLOBAL_MACRO_INVOKE = 'ivk';
+    const GLOBAL_PRINT = 'prt';
+    const GLOBAL_UNLESS = 'unl';
 
     protected $blocks = array(
         '@' => 'macro',
@@ -41,9 +40,10 @@ class Compiler
 
     /**
      * @param string $code
+     * @param string $filename
      * @return string
      */
-    public function compile($code)
+    public function compile($code, $filename)
     {
         $response = array();
         $tokens = $this->tokenize($code);
@@ -274,7 +274,7 @@ class Compiler
      */
     public function compileString($string, array $tokens, $code)
     {
-        return '\'' . $string . '\'';
+        return '\'' . $this->setStringDelimiters('\'', $string) . '\'';
     }
 
     /**
@@ -324,8 +324,20 @@ class Compiler
         }
         $response = null;
         if (is_numeric($name)) {
+            // @todo compileTagNumeric
             $response = $this->compileList(
-                array_merge(array($name), $argumentsList), $tokens, $code
+                array_merge(
+                    array($name), $argumentsList
+                ), $tokens, $code
+            );
+        } else if ($this->isStringString($name)) {
+            // @todo compileTagString
+            $name = $this->trimStringDelimiters($name);
+            $name = $this->setStringDelimiters('\'', $name);
+            $response = $this->compileList(
+                array_merge(
+                    array($this->compileString($name, $tokens, $code)), $argumentsList
+                ), $tokens, $code
             );
         } else {
             $response = $this->compileVariableInvoke(
@@ -386,7 +398,9 @@ class Compiler
      */
     public function compileTagPartial($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
-        return $this->compile(file_get_contents($name));
+        return $this->compile(
+            $this->loadFile($name, $tokens, $code), $name
+        );
     }
 
     /**
@@ -653,7 +667,6 @@ class Compiler
             self::GLOBAL_MACRO_DEFINE,
             self::GLOBAL_MACRO_INVOKE,
             self::GLOBAL_PRINT,
-            self::GLOBAL_TEMPLATE,
             self::GLOBAL_UNLESS,
         );
     }
@@ -724,7 +737,8 @@ class Compiler
         if (!preg_match('/\s/s', $tag)) {
             return array();
         }
-        $arguments = preg_split('/\s/s', $tag);
+        preg_match_all('/(([a-zA-Z0-9]+)|("(?:[^"\\\\]|\\\\.)*"))/', $tag, $arguments);
+        $arguments = $arguments[0];
         array_shift($arguments);
         return $arguments;
     }
@@ -771,6 +785,15 @@ class Compiler
     public function isScopeTag(array $scope, array $tokens, $code)
     {
         return count($scope) === 1;
+    }
+
+    /**
+     * @param string $string
+     * @return boolean
+     */
+    public function isStringString($string)
+    {
+        return preg_match('/^"(?:[^"\\\\]|\\\\.)*"$/', $string);
     }
 
     /**
@@ -835,6 +858,33 @@ class Compiler
     }
 
     /**
+     * @param filename $tag
+     * @param array $tokens
+     * @param string $code
+     * @return boolean
+     */
+    public function loadFile($filename, array $tokens, $code)
+    {
+        if (!file_exists($filename) || !is_readable($filename)) {
+            throw new RuntimeException('Given file is not readable or does not exist: ' . $filename);
+        }
+        return file_get_contents($filename);
+    }
+
+    /**
+     * @param string $delimiter
+     * @param string $string
+     * @return string
+     */
+    public function setStringDelimiters($delimiter, $string)
+    {
+        $string = str_replace(
+            array('\"', '\\\''), array('"', '\''), $string
+        );
+        return str_replace($delimiter, '\\' . $delimiter, $string);
+    }
+
+    /**
      * @param string $code
      * @param array $context
      * @return array
@@ -873,6 +923,16 @@ class Compiler
             array_push($response, '');
         }
         return $response;
+    }
+
+    /**
+     * @param string $string
+     * @return string
+     */
+    public function trimStringDelimiters($string)
+    {
+        $string = trim($string, '"');
+        return trim($string, '\'');
     }
 
 }
