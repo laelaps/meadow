@@ -19,8 +19,11 @@
 
 {{@.foo one two three}}
 
-{{foo}}
+{{foo bar baz 1 2 "foo hello"}}
 {{&foo}}
 
-{{> somefile.foo }}
+{{1 2 hello 2}}
+{{hi 2 hello 2}}
+
+{{> templates/foonested.mustache }}
 

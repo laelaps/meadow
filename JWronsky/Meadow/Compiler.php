@@ -20,7 +20,6 @@ class Compiler
     const GLOBAL_MACRO_DEFINE = 'm';
     const GLOBAL_MACRO_INVOKE = 'n';
     const GLOBAL_PRINT = 'p';
-    const GLOBAL_REQUIRE = 'r';
     const GLOBAL_TEMPLATE = 't';
     const GLOBAL_UNLESS = 'n';
 
@@ -48,21 +47,7 @@ class Compiler
     {
         $response = array();
         $tokens = $this->tokenize($code);
-        return $this->compileDelimitersExternal(
-            $this->compileOperatorAssign(
-                $this->compileVariable(self::GLOBAL_TEMPLATE, $tokens, $code),
-                $this->compileFunction(
-                    $this->getGlobals($tokens, $code),
-                    array(),
-                    $this->compileDelimitersInternal(
-                        $this->compileTokens($tokens, $code), $tokens, $code
-                    ),
-                    $tokens, $code
-                ),
-                $tokens, $code
-            ),
-            $tokens, $code
-        );
+        return $this->compileTokens($tokens, $code);
     }
 
     /**
@@ -260,10 +245,8 @@ class Compiler
         return $this->compileDelimitersExternal(
             $this->compileVariableInvoke(
                 $variable, array(
-                    $this->compileVariableInvoke(
-                        self::GLOBAL_CONTEXT, array(
-                            $this->compileString($name, $tokens, $code)
-                        ), $tokens, $code
+                    $this->compileTag(
+                        $symbol, $name, array(), null, $tokens, $code
                     ),
                     $this->compileVariable(self::GLOBAL_CONTEXT, $tokens, $code),
                     $this->compileFunction(
@@ -325,30 +308,47 @@ class Compiler
     /**
      * @param string $symbol
      * @param string $name
+     * @param array $arguments
      * @param string $tag
      * @param array $tokens
      * @param string $code
      * @return string
      */
-    public function compileTag($symbol, $name, $tag, array $tokens, $code)
+    public function compileTag($symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
-        return $this->compileVariableInvoke(
-            self::GLOBAL_CONTEXT, array(
-                $this->compileString($name, $tokens, $code)
-            ), $tokens, $code
-        );
+        $argumentsList = array();
+        if (!empty($arguments)) {
+            foreach ($arguments as $argument) {
+                $argumentsList[] = $this->compileTag($symbol, $argument, array(), $tag, $tokens, $code);
+            }
+        }
+        $response = null;
+        if (is_numeric($name)) {
+            $response = $this->compileList(
+                array_merge(array($name), $argumentsList), $tokens, $code
+            );
+        } else {
+            $response = $this->compileVariableInvoke(
+                self::GLOBAL_CONTEXT, array_merge(
+                    array($this->compileString($name, $tokens, $code)),
+                    $argumentsList
+                ), $tokens, $code
+            );
+        }
+        return $response;
     }
 
     /**
      * @param string $tagCode
      * @param string $symbol
+     * @param array $arguments
      * @param string $name
      * @param string $tag
      * @param array $tokens
      * @param string $code
      * @return string
      */
-    public function compileTagKeyholder($tagCode, $symbol, $name, $tag, array $tokens, $code)
+    public function compileTagKeyholder($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
         return $this->compileVariable(self::GLOBAL_KEY, $tokens, $code);
     }
@@ -362,7 +362,7 @@ class Compiler
      * @param string $code
      * @return string
      */
-    public function compileTagMacro($tagCode, $symbol, $name, $tag, array $tokens, $code)
+    public function compileTagMacro($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
         return $this->compileVariableInvoke(
             self::GLOBAL_MACRO_INVOKE,
@@ -384,35 +384,22 @@ class Compiler
      * @param string $code
      * @return string
      */
-    public function compileTagPartial($tagCode, $symbol, $name, $tag, array $tokens, $code)
+    public function compileTagPartial($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
-        $globals = $this->compileVariables(
-            $this->getGlobals($tokens, $code), $tokens, $code
-        );
-        return $this->compileVariableInvoke(
-            self::GLOBAL_REQUIRE,
-            array_merge(
-                array(
-                    $this->compileString($name, $tokens, $code)
-                ),
-                $this->compileVariables(
-                    $this->getGlobals($tokens, $code), $tokens, $code
-                )
-            ),
-            $tokens, $code
-        );
+        return $this->compile(file_get_contents($name));
     }
 
     /**
      * @param string $tagCode
      * @param string $symbol
+     * @param array $arguments
      * @param string $name
      * @param string $tag
      * @param array $tokens
      * @param string $code
      * @return string
      */
-    public function compileTagPrinter($tagCode, $symbol, $name, $tag, array $tokens, $code)
+    public function compileTagPrinter($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
         return $this->compileDelimitersExternal(
                  'echo ' .
@@ -436,7 +423,7 @@ class Compiler
      * @param string $code
      * @return string
      */
-    public function compileTagPrinterUnescaped($tagCode, $symbol, $name, $tag, array $tokens, $code)
+    public function compileTagPrinterUnescaped($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
         return $this->compileDelimitersExternal(
             'echo ' . $tagCode, $tokens, $code
@@ -452,7 +439,7 @@ class Compiler
      * @param string $code
      * @return string
      */
-    public function compileTagUpperContext($tagCode, $symbol, $name, $tag, array $tokens, $code)
+    public function compileTagUpperContext($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
         return $this->compileVariableInvoke(
             self::GLOBAL_CONTEXT_UPPER, array(
@@ -602,10 +589,13 @@ class Compiler
     {
         $name = $this->getTagName($tag, $tokens, $code);
         $symbol = $this->getTagSymbol($tag, $tokens, $code);
-        $tagCode = $this->compileTag($symbol, $name, $tag, $tokens, $code);
         $symbols = $this->tokenizeTagSymbol($symbol, $tag, $tokens, $code);
+        $arguments = $this->getTagArguments($tag, $tokens, $code);
+        $tagCode = $this->compileTag($symbol, $name, $arguments, $tag, $tokens, $code);
         foreach ($symbols as $symbol) {
-            $tagCode = $this->dispatchTagSymbolCompiler($symbol, $name, $tagCode, $tag, $tokens, $code);
+            $tagCode = $this->dispatchTagSymbolCompiler(
+                $symbol, $name, $arguments, $tagCode, $tag, $tokens, $code
+            );
         }
         return $tagCode;
     }
@@ -615,21 +605,34 @@ class Compiler
      *
      * @param string $symbol
      * @param string $name
+     * @param array $arguments
      * @param string $tag
      * @param string $tagCode
      * @param array $tokens
      * @param string $code
      * @return string
      */
-    public function dispatchTagSymbolCompiler($symbol, $name, $tagCode, $tag, array $tokens, $code)
+    public function dispatchTagSymbolCompiler($symbol, $name, array $arguments, $tagCode, $tag, array $tokens, $code)
     {
         switch ($symbol) {
-            case '@.': return $this->compileTagMacro($tagCode, $symbol, $name, $tag, $tokens, $code);
-            case '$': return $this->compileTagKeyholder($tagCode, $symbol, $name, $tag, $tokens, $code);
-            case '^': return $this->compileTagUpperContext($tagCode, $symbol, $name, $tag, $tokens, $code);
-            case '>': return $this->compileTagPartial($tagCode, $symbol, $name, $tag, $tokens, $code);
-            case '&': return $this->compileTagPrinterUnescaped($tagCode, $symbol, $name, $tag, $tokens, $code);
-            default: return $this->compileTagPrinter($tagCode, $symbol, $name, $tag, $tokens, $code);
+            case '@.': return $this->compileTagMacro(
+                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
+            );
+            case '$': return $this->compileTagKeyholder(
+                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
+            );
+            case '^': return $this->compileTagUpperContext(
+                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
+            );
+            case '>': return $this->compileTagPartial(
+                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
+            );
+            case '&': return $this->compileTagPrinterUnescaped(
+                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
+            );
+            default: return $this->compileTagPrinter(
+                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
+            );
         }
     }
 
@@ -650,7 +653,6 @@ class Compiler
             self::GLOBAL_MACRO_DEFINE,
             self::GLOBAL_MACRO_INVOKE,
             self::GLOBAL_PRINT,
-            self::GLOBAL_REQUIRE,
             self::GLOBAL_TEMPLATE,
             self::GLOBAL_UNLESS,
         );
@@ -863,6 +865,9 @@ class Compiler
             if (strpos($symbol, $mnemonic) !== false) {
                 $response[] = $mnemonic;
             }
+        }
+        if (in_array('>', $response)) {
+            return array('>');
         }
         if (!in_array('&', $response)) {
             array_push($response, '');
