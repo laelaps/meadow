@@ -1,0 +1,148 @@
+{do macro <- foo -> object}
+    <strong>Hello, {object}!</strong>
+{done}
+
+{@.foo <- "world" -> bar} // does not print anything
+// everyting goes to 'bar'
+{@.foo <- "world" => bar} // prints and pipes to bar
+
+// symbol has the same effect as
+// $arguments['entities'] = true;
+{@.object | escape <- :entities}
+
+// by default, output goes to stdout, if '->' ocurred,
+// it is piped into variable
+{do foreach <- global.foo -> foo bar baz}
+    {foo} {bar} {baz}
+{done}
+
+{global.foo <- "hi" | lower <- "hello" -> foo}
+{foreach <- floba.foo foo bar baz}
+
+{do foreach <- global.foo -> foo bar baz}
+    {foo} {bar} {baz}
+{done}
+
+{dodone lower <- "HELLO" -> bar}
+{foo | lower <- "HELLO" -> bar}
+{foo -> . | somemethod <- "hello" }
+{bar}
+
+pipe foo into bar and baz
+list($bar, $baz) = $foo;
+{foo -> bar baz}
+
+pipe foo into foo
+{foo |}
+{foo -> foo}
+
+call foo
+{foo <-}
+
+call foo and pipe it into bar
+{foo <- -> bar}
+
+call foo and pipe it into itself
+{foo <- -> foo}
+
+call bar and pipe into into foo
+{bar <- -> foo}
+
+call foo with bar argument and pipe it into foo
+{foo <- bar -> foo}
+
+call bar with foo argument and pipe it into foo
+{foo | bar}
+{bar <- foo -> foo}
+
+call bar with foo argument and call baz with result
+and pipe it into foo
+{baz <- bar <- foo -> . -> foo}
+{baz <- foo | bar -> foo}
+foo = baz(foo = bar(foo));
+called method is an object; calling is a process
+dot - return to previous call stack method
+modify call stack order - not operator precedence
+several call operators, each with different priority
+and direction
+
+{foo | upper | lower}
+
+operators precedence:
+start from left to right
+when last step was right to left:
+1. |
+2. <- (left to right)
+3. -> (right to left)
+when last step was left to right:
+1. |
+2. -> (left to right)
+3. <- (right to left)
+
+{do extend <- "template.meadow"}
+    {do partial <- "hello"}
+        Hello
+    {done}
+{done}
+
+call foo with bar
+{foo <- bar}
+{bar -> foo}
+
+call foo with bar and pipe result through
+{foo <- bar | baz}
+
+pipe bar with baz and call foo with result
+{bar | baz -> foo}
+
+call foo with baz and pipe bar through result
+{bar | foo <- baz}
+
+{foo <- bar | baz -> bar}
+bar(baz(foo(bar)))
+
+by default, last evaulated expression in block
+is printed
+
+literals:
+1. array []
+2. object {} (JSON)
+
+yield method (as in ruby), when block given
+
+call operators precedence:
+1. [method] <- [arguments]
+2. [arguments] | [method]
+3. [arguments] -> [method]
+4. do [method] [arguments]
+values are returned in place, every [arguments] is
+magnetic
+methods are arguments-greedy
+
+block
+}:<= from here
+to here =>:{od}
+
+when block is given, the last called function is
+repeating with its interior
+
+{do for each <- values | upper}{:use key value}
+    {key} {value}
+{:done}
+
+~ - stdio stream
+rpn
+{do for range <- 1 100 2}{:use i}
+    <!-- {response | do ? i 2 -> modulo} -->
+
+    {do ? i 2 -> modulo}{:use}{done}
+    same as above:
+    {:done do ? i 2 -> modulo}
+
+    {do and do > i 10 < <- i 20}{:use}
+        i is greater than to and less than 20
+    {:done}
+{:done}
+
+~ | <- this is used by default at beginning of any expression
+:foo <- keyword

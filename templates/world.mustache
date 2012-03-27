@@ -1,0 +1,31 @@
+Hello, world!
+
+{{@macro}}
+	Hello world macro! {{foor}}
+{{/macro}}
+
+{{@.macro}}
+{{@.&macro}}
+
+{{foo}} {{bar}}
+
+{{baz}}
+
+{{booz}} {{&booz}}
+
+{{foo.bar.baz}}
+
+{{!foo}}
+	{{?home}}
+		{{#iterator}}
+			{{^hello}}
+			{{$}}
+			{{#nested}}
+				NESTED FOO: [{{foo}}]
+				NESTED BAR: [{{bar}}]
+				{{^foo}}
+				{{>hello}}
+			{{/nested}}
+		{{/iterator}}
+	{{/home}}
+{{/foo}}

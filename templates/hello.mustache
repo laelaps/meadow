@@ -1,0 +1,36 @@
+Hello, world!
+
+{>foonested.mustache}
+
+{@macro one two three}
+	Hello world macro!
+	{one}
+	{two} {three}
+{/macro}
+
+{@.macro}
+{@.&macro}
+{@.&macro foo bar baz}
+
+{foo} {bar}
+
+{baz}
+
+{booz} {&booz}
+
+{foo.bar.baz}
+
+{!foo}
+	{?home}
+		{#iterator}
+			{^hello}
+			{$}
+			{#nested}
+				NESTED FOO: [{foo}]
+				NESTED BAR: [{bar}]
+				{^foo}
+				{>hello}
+			{/nested}
+		{/iterator}
+	{/home}
+{/foo}
