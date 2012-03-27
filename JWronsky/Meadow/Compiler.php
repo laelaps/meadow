@@ -11,20 +11,25 @@ class Compiler
     const TAG_DELIMITER_CLOSE = '}}';
     const TAG_DELIMITER_OPEN = '{{';
 
+    const GLOBAL_CONTEXT = 'c';
+    const GLOBAL_CONTEXT_UPPER = 'u';
+    const GLOBAL_FUNCTION = 'f';
+    const GLOBAL_IF = 'd';
+    const GLOBAL_ITERATOR = 'i';
+    const GLOBAL_KEY = 'k';
+    const GLOBAL_MACRO_DEFINE = 'm';
+    const GLOBAL_MACRO_INVOKE = 'n';
+    const GLOBAL_PRINT = 'p';
+    const GLOBAL_REQUIRE = 'r';
+    const GLOBAL_TEMPLATE = 't';
+    const GLOBAL_UNLESS = 'n';
+
     protected $blocks = array(
         '@' => 'macro',
         '#' => 'foreach',
         '?' => 'if',
         '!' => 'unless',
         '/' => null,
-    );
-
-    protected $globals = array(
-        'fun', // function
-        'itr', // iterator
-        'mcr', // macro
-        'prt', // print
-        'req', // require
     );
 
     protected $mnemonics = array(
@@ -43,10 +48,91 @@ class Compiler
     {
         $response = array();
         $tokens = $this->tokenize($code);
-        $globals = $this->compileVariablesList($this->globals, $tokens, $code);
-        return '<?php $tpl = function ($key, $ctx, ' . $globals . ') { ?>'
-             . $this->compileTokens($tokens, $code)
-             . '<?php } ?>';
+        return $this->compileDelimitersExternal(
+            $this->compileOperatorAssign(
+                $this->compileVariable(self::GLOBAL_TEMPLATE, $tokens, $code),
+                $this->compileFunction(
+                    $this->getGlobals($tokens, $code),
+                    array(),
+                    $this->compileDelimitersInternal(
+                        $this->compileTokens($tokens, $code), $tokens, $code
+                    ),
+                    $tokens, $code
+                ),
+                $tokens, $code
+            ),
+            $tokens, $code
+        );
+    }
+
+    /**
+     * @param string $body
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileDelimitersExternal($body, array $tokens, $code)
+    {
+        return '<?php ' . $body . ' ?>';
+    }
+
+    /**
+     * @param string $body
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileDelimitersInternal($body, array $tokens, $code)
+    {
+        return ' ?>' . $body . '<?php ';
+    }
+
+    /**
+     * @param array $arguments
+     * @param array $uses
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileFunction(array $arguments, array $uses, $body, array $tokens, $code)
+    {
+        if (!empty($uses)) {
+            $usesList = 'use('
+                      . $this->compileVariablesList($uses, $tokens, $code)
+                      . ')';
+        } else {
+            $usesList = '';
+        }
+        return 'function('
+             . $this->compileVariablesList($arguments, $tokens, $code)
+             . ')'
+             . $usesList
+             . '{'
+             . $body
+             . '}';
+    }
+
+    /**
+     * @param array $variables
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileList(array $items, array $tokens, $code)
+    {
+        return implode(',', $items);
+    }
+
+    /**
+     * @param string $left
+     * @param string $right
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileOperatorAssign($left, $right, array $tokens, $code)
+    {
+        return $left . '=' . $right;
     }
 
     /**
@@ -76,9 +162,9 @@ class Compiler
      */
     public function compileScopeIf($symbol, $name, array $arguments, array $scope, array $tokens, $code)
     {
-        return '<?php if (isset($ctx->{"' . $name . '"}) && !empty($ctx->{"' . $name . '"})): ?>'
-             . $this->compileTokens($scope, $code)
-             . '<?php endif /* ' . $symbol . $name . ' */ ?>';
+        return $this->compileScopeVariableCall(
+            self::GLOBAL_IF, $symbol, $name, $arguments, $scope, $tokens, $code
+        );
     }
 
     /**
@@ -92,10 +178,9 @@ class Compiler
      */
     public function compileScopeIterator($symbol, $name, array $arguments, array $scope, array $tokens, $code)
     {
-        $globals = $this->compileVariablesList($this->globals, $tokens, $code);
-        return '<?php $itr($ctx->{"' . $name . '"}, function($key, $ctx)) use(' . $globals . ') { ?>'
-             . $this->compileTokens($scope, $code)
-             . '<?php } /* ' . $symbol . $name . ' */ ?>';
+        return $this->compileScopeVariableCall(
+            self::GLOBAL_ITERATOR, $symbol, $name, $arguments, $scope, $tokens, $code
+        );
     }
 
     /**
@@ -109,10 +194,33 @@ class Compiler
      */
     public function compileScopeMacro($symbol, $name, array $arguments, array $scope, array $tokens, $code)
     {
-        $arguments = implode('","', $arguments);
-        return '<?php $mcr->add("' . $name . '", array("' . $arguments . '"), function($key, $ctx) { ?>'
-             . $this->compileTokens($scope, $code)
-             . '<?php }) /* ' . $symbol . $name . ' */ ?>';
+        $internalVariables = array(
+            self::GLOBAL_KEY,
+            self::GLOBAL_CONTEXT,
+        );
+        array_unshift($arguments, $name);
+        $argumentsList = $this->compileStringsList($arguments, $tokens, $code);
+        return $this->compileDelimitersExternal(
+            $this->compileVariableInvoke(
+                self::GLOBAL_MACRO_DEFINE,
+                array(
+                    $argumentsList,
+                    $this->compileFunction(
+                        $internalVariables,
+                        $this->getGlobalsExclude($internalVariables, $tokens, $code),
+                        $this->compileDelimitersInternal(
+                            $this->compileTokens($scope, $code),
+                            $tokens,
+                            $scope
+                        ),
+                        $tokens, $code
+                    )
+                ),
+                $tokens, $code
+            ),
+            $tokens, $code
+        );
+
     }
 
     /**
@@ -126,9 +234,92 @@ class Compiler
      */
     public function compileScopeUnless($symbol, $name, array $arguments, array $scope, array $tokens, $code)
     {
-        return '<?php if (!isset($ctx->{"' . $name . '"}) || empty($ctx->{"' . $name . '"})): ?>'
-             . $this->compileTokens($scope, $code)
-             . '<?php endif /* ' . $symbol . $name . ' */ ?>';
+        return $this->compileScopeVariableCall(
+            self::GLOBAL_UNLESS, $symbol, $name, $arguments, $scope, $tokens, $code
+        );
+    }
+
+    /**
+     * @param string $variable
+     * @param string $symbol
+     * @param string $name
+     * @param array $arguments
+     * @param array $scope
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileScopeVariableCall($variable, $symbol, $name,
+        array $arguments, array $scope, array $tokens, $code
+    ) {
+        $internalVariables = array(
+            self::GLOBAL_KEY,
+            self::GLOBAL_CONTEXT,
+            self::GLOBAL_CONTEXT_UPPER,
+        );
+        return $this->compileDelimitersExternal(
+            $this->compileVariableInvoke(
+                $variable, array(
+                    $this->compileVariableInvoke(
+                        self::GLOBAL_CONTEXT, array(
+                            $this->compileString($name, $tokens, $code)
+                        ), $tokens, $code
+                    ),
+                    $this->compileVariable(self::GLOBAL_CONTEXT, $tokens, $code),
+                    $this->compileFunction(
+                        $internalVariables,
+                        $this->getGlobalsExclude(
+                            $internalVariables, $tokens, $code
+                        ),
+                        $this->compileDelimitersInternal(
+                            $this->compileTokens($scope, $code), $tokens, $code
+                        ),
+                        $tokens, $code
+                    ),
+                ),
+                $tokens, $code
+            ),
+            $tokens, $code
+        );
+    }
+
+    /**
+     * @param string $string
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileString($string, array $tokens, $code)
+    {
+        return '\'' . $string . '\'';
+    }
+
+    /**
+     * @param array $string
+     * @param array $tokenss
+     * @param string $code
+     * @return string
+     */
+    public function compileStrings(array $strings, array $tokens, $code)
+    {
+        $response = array();
+        foreach ($strings as $string) {
+            $response[] = $this->compileString($string, $tokens, $code);
+        }
+        return $response;
+    }
+
+    /**
+     * @param array $strings
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileStringsList(array $strings, array $tokens, $code)
+    {
+        return $this->compileList(
+            $this->compileStrings($strings, $tokens, $code), $tokens, $code
+        );
     }
 
     /**
@@ -141,7 +332,11 @@ class Compiler
      */
     public function compileTag($symbol, $name, $tag, array $tokens, $code)
     {
-        return '$ctx->{"' . $name . '"}';
+        return $this->compileVariableInvoke(
+            self::GLOBAL_CONTEXT, array(
+                $this->compileString($name, $tokens, $code)
+            ), $tokens, $code
+        );
     }
 
     /**
@@ -155,7 +350,7 @@ class Compiler
      */
     public function compileTagKeyholder($tagCode, $symbol, $name, $tag, array $tokens, $code)
     {
-        return '$key';
+        return $this->compileVariable(self::GLOBAL_KEY, $tokens, $code);
     }
 
     /**
@@ -169,7 +364,15 @@ class Compiler
      */
     public function compileTagMacro($tagCode, $symbol, $name, $tag, array $tokens, $code)
     {
-        return '$mcr->run("' . $name . '", $key, $ctx)';
+        return $this->compileVariableInvoke(
+            self::GLOBAL_MACRO_INVOKE,
+            array(
+                $this->compileString($name, $tokens, $code),
+                $this->compileVariable(self::GLOBAL_KEY, $tokens, $code),
+                $this->compileVariable(self::GLOBAL_CONTEXT, $tokens, $code),
+            ),
+            $tokens, $code
+        );
     }
 
     /**
@@ -183,8 +386,21 @@ class Compiler
      */
     public function compileTagPartial($tagCode, $symbol, $name, $tag, array $tokens, $code)
     {
-        $globals = $this->compileVariablesList($this->globals, $tokens, $code);
-        return '$req("' . $name . '", $key, $ctx, ' . $globals . ')';
+        $globals = $this->compileVariables(
+            $this->getGlobals($tokens, $code), $tokens, $code
+        );
+        return $this->compileVariableInvoke(
+            self::GLOBAL_REQUIRE,
+            array_merge(
+                array(
+                    $this->compileString($name, $tokens, $code)
+                ),
+                $this->compileVariables(
+                    $this->getGlobals($tokens, $code), $tokens, $code
+                )
+            ),
+            $tokens, $code
+        );
     }
 
     /**
@@ -198,7 +414,17 @@ class Compiler
      */
     public function compileTagPrinter($tagCode, $symbol, $name, $tag, array $tokens, $code)
     {
-        return '<?php echo $prt(' . $tagCode . ') ?>';
+        return $this->compileDelimitersExternal(
+                 'echo ' .
+                 $this->compileVariableInvoke(
+                     self::GLOBAL_PRINT,
+                     array(
+                         $tagCode
+                     ),
+                     $tokens, $code
+                 ),
+                 $tokens, $code
+             );
     }
 
     /**
@@ -212,7 +438,9 @@ class Compiler
      */
     public function compileTagPrinterUnescaped($tagCode, $symbol, $name, $tag, array $tokens, $code)
     {
-        return '<?php echo ' . $tagCode . ' ?>';
+        return $this->compileDelimitersExternal(
+            'echo ' . $tagCode, $tokens, $code
+        );
     }
 
     /**
@@ -226,7 +454,11 @@ class Compiler
      */
     public function compileTagUpperContext($tagCode, $symbol, $name, $tag, array $tokens, $code)
     {
-        return '$utx->ct->{"' . $name . '"}';
+        return $this->compileVariableInvoke(
+            self::GLOBAL_CONTEXT_UPPER, array(
+                $this->compileString($name, $tokens, $code)
+            ), $tokens, $code
+        );
     }
 
     /**
@@ -251,15 +483,88 @@ class Compiler
     }
 
     /**
+     * @param string $variable
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileVariable($variable, array $tokens, $code)
+    {
+        return '$' . $variable;
+    }
+
+    /**
+     * @param string $variable
+     * @param array $arguments
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileVariableInvoke($variable, array $arguments, array $tokens, $code)
+    {
+        return $this->compileVariable($variable, $tokens, $code)
+             . '('
+             . $this->compileList($arguments, $tokens, $code)
+             . ')';
+    }
+
+    /**
+     * @param string $variable
+     * @param string $pointer
+     * @param array $arguments
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileVariablePointerInvoke($variable, $pointer, array $arguments, array $tokens, $code)
+    {
+        return $this->compileVariablePointer($variable, $pointer, $tokens, $code)
+             . '('
+             . $this->compileList($arguments, $tokens, $code)
+             . ')';
+    }
+
+    /**
+     * @param string $variable
+     * @param string $pointer
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileVariablePointer($variable, $pointer, array $tokens, $code)
+    {
+        return $this->compileVariable($variable, $tokens, $code)
+             . '->{'
+             . $this->compileString($pointer, $tokens, $code)
+             . '}';
+    }
+
+    /**
      * @param array $variables
-     * @param array $scope
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileVariables(array $variables, array $tokens, $code)
+    {
+        $response = array();
+        foreach ($variables as $variable) {
+            $response[] = $this->compileVariable($variable, $tokens, $code);
+        }
+        return $response;
+    }
+
+    /**
+     * @param array $variables
      * @param array $tokens
      * @param string $code
      * @return string
      */
     public function compileVariablesList(array $variables, array $tokens, $code)
     {
-        return '$' . implode(', $', $variables);
+        return $this->compileList(
+            $this->compileVariables($variables, $tokens, $code), $tokens, $code
+        );
     }
 
     /**
@@ -326,6 +631,45 @@ class Compiler
             case '&': return $this->compileTagPrinterUnescaped($tagCode, $symbol, $name, $tag, $tokens, $code);
             default: return $this->compileTagPrinter($tagCode, $symbol, $name, $tag, $tokens, $code);
         }
+    }
+
+    /**
+     * @param array $tokens
+     * @param string $code
+     * @return array
+     */
+    public function getGlobals(array $tokens, $code)
+    {
+        return array(
+            self::GLOBAL_CONTEXT,
+            self::GLOBAL_CONTEXT_UPPER,
+            self::GLOBAL_FUNCTION,
+            self::GLOBAL_ITERATOR,
+            self::GLOBAL_IF,
+            self::GLOBAL_KEY,
+            self::GLOBAL_MACRO_DEFINE,
+            self::GLOBAL_MACRO_INVOKE,
+            self::GLOBAL_PRINT,
+            self::GLOBAL_REQUIRE,
+            self::GLOBAL_TEMPLATE,
+            self::GLOBAL_UNLESS,
+        );
+    }
+
+    /**
+     * @param array $exclude
+     * @param array $tokens
+     * @param string $code
+     * @return array
+     */
+    public function getGlobalsExclude(array $exclude, array $tokens, $code)
+    {
+        return array_filter(
+            $this->getGlobals($tokens, $code),
+            function ($variable) use ($exclude) {
+                return !in_array($variable, $exclude);
+            }
+        );
     }
 
     /**
@@ -516,13 +860,8 @@ class Compiler
     {
         $response = array();
         foreach ($this->mnemonics as $mnemonic => $description) {
-            if (strlen($symbol) < 1) {
-                break;
-            }
-            $mnemonicLength = strlen($mnemonic);
-            if (substr($symbol, 0, $mnemonicLength) === $mnemonic) {
+            if (strpos($symbol, $mnemonic) !== false) {
                 $response[] = $mnemonic;
-                $symbol = substr($symbol, $mnemonicLength);
             }
         }
         if (!in_array('&', $response)) {

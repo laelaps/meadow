@@ -1,7 +1,26 @@
 
+
 {{hello}}
 
 {{?hello}}
 	{{#loop}}
 	{{/loop}}
 {{/hello}}
+
+{{!hello}}
+	unless hello
+{{/hello}}
+
+{{@foo one two three}}
+	macro
+{{/foo}}
+
+{{^foo}}
+
+{{@.foo one two three}}
+
+{{foo}}
+{{&foo}}
+
+{{> somefile.foo }}
+
