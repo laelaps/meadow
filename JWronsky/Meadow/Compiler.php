@@ -13,13 +13,13 @@ class Compiler
 
     const GLOBAL_CONTEXT = 'ctx';
     const GLOBAL_CONTEXT_UPPER = 'utx';
+    const GLOBAL_ESCAPE = 'esc';
     const GLOBAL_FUNCTION = 'fun';
     const GLOBAL_IF = 'ifd';
     const GLOBAL_ITERATOR = 'itr';
     const GLOBAL_KEY = 'key';
     const GLOBAL_MACRO_DEFINE = 'def';
     const GLOBAL_MACRO_INVOKE = 'ivk';
-    const GLOBAL_PRINT = 'prt';
     const GLOBAL_UNLESS = 'unl';
 
     protected $blocks = array(
@@ -46,7 +46,7 @@ class Compiler
     public function compile($code, $filename)
     {
         $response = array();
-        $tokens = $this->tokenize($code);
+        $tokens = $this->tokenizeCode($code);
         return $this->compileTokens($tokens, $code);
     }
 
@@ -130,7 +130,7 @@ class Compiler
      */
     public function compileScope(array $scope, array $tokens, $code)
     {
-        if ($this->isScopeTag($scope, $tokens, $code)) {
+        if ($this->isScopeATag($scope, $tokens, $code)) {
             return $this->dispatchTagCompiler($scope[0], $tokens, $code);
         }
         return $this->dispatchScopeCompiler($scope, $tokens, $code);
@@ -316,38 +316,52 @@ class Compiler
      */
     public function compileTag($symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
+        return $this->compileVariableInvoke(
+            self::GLOBAL_CONTEXT, array_merge(
+                array($this->compileString($name, $tokens, $code)),
+                $this->compileTagArgumentsList($symbol, $name, $arguments, $tag, $tokens, $code)
+            ), $tokens, $code
+        );
+    }
+
+    /**
+     * @param string $symbol
+     * @param string $name
+     * @param array $arguments
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileTagArgumentsList($symbol, $name, array $arguments, $tag, array $tokens, $code)
+    {
         $argumentsList = array();
         if (!empty($arguments)) {
             foreach ($arguments as $argument) {
                 $argumentsList[] = $this->compileTag($symbol, $argument, array(), $tag, $tokens, $code);
             }
         }
-        $response = null;
-        if (is_numeric($name)) {
-            // @todo compileTagNumeric
-            $response = $this->compileList(
-                array_merge(
-                    array($name), $argumentsList
-                ), $tokens, $code
-            );
-        } else if ($this->isStringString($name)) {
-            // @todo compileTagString
-            $name = $this->trimStringDelimiters($name);
-            $name = $this->setStringDelimiters('\'', $name);
-            $response = $this->compileList(
-                array_merge(
-                    array($this->compileString($name, $tokens, $code)), $argumentsList
-                ), $tokens, $code
-            );
-        } else {
-            $response = $this->compileVariableInvoke(
-                self::GLOBAL_CONTEXT, array_merge(
-                    array($this->compileString($name, $tokens, $code)),
-                    $argumentsList
-                ), $tokens, $code
-            );
-        }
-        return $response;
+        return $argumentsList;
+    }
+
+    /**
+     * @param string $tagCode
+     * @param string $symbol
+     * @param array $arguments
+     * @param string $name
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileTagConstant($symbol, $name, array $arguments, $tag, array $tokens, $code)
+    {
+        return $this->compileList(
+            array_merge(
+                array($name),
+                $this->compileTagArgumentsList($symbol, $name, $arguments, $tag, $tokens, $code)
+            ), $tokens, $code
+        );
     }
 
     /**
@@ -418,7 +432,7 @@ class Compiler
         return $this->compileDelimitersExternal(
                  'echo ' .
                  $this->compileVariableInvoke(
-                     self::GLOBAL_PRINT,
+                     self::GLOBAL_ESCAPE,
                      array(
                          $tagCode
                      ),
@@ -439,8 +453,26 @@ class Compiler
      */
     public function compileTagPrinterUnescaped($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
-        return $this->compileDelimitersExternal(
-            'echo ' . $tagCode, $tokens, $code
+        return $this->compileDelimitersExternal('echo ' . $tagCode, $tokens, $code);
+    }
+
+    /**
+     * @param string $symbol
+     * @param string $name
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileTagString($symbol, $name, array $arguments, $tag, array $tokens, $code)
+    {
+        $name = $this->trimStringDelimiters($name);
+        $name = $this->setStringDelimiters('\'', $name);
+        return $this->compileList(
+            array_merge(
+                array($this->compileString($name, $tokens, $code)),
+                $this->compileTagArgumentsList($symbol, $name, $arguments, $tag, $tokens, $code)
+            ), $tokens, $code
         );
     }
 
@@ -583,12 +615,10 @@ class Compiler
         $symbol = $this->getTagSymbol($opening, $tokens, $code);
         $name = $this->getTagName($opening, $tokens, $code);
         $arguments = $this->getTagArguments($opening, $tokens, $code);
-        switch ($symbol) {
-            case '!': return $this->compileScopeUnless($symbol, $name, $arguments, $scope, $tokens, $code);
-            case '@': return $this->compileScopeMacro($symbol, $name, $arguments, $scope, $tokens, $code);
-            case '?': return $this->compileScopeIf($symbol, $name, $arguments, $scope, $tokens, $code);
-            default: return $this->compileScopeIterator($symbol, $name, $arguments, $scope, $tokens, $code);
-        }
+        $methodName = $this->getScopeSymbolCompilerMethod($symbol, $scope, $tokens, $code);
+        return call_user_func(
+            array($this, $methodName), $symbol, $name, $arguments, $scope, $tokens, $code
+        );
     }
 
     /**
@@ -605,7 +635,7 @@ class Compiler
         $symbol = $this->getTagSymbol($tag, $tokens, $code);
         $symbols = $this->tokenizeTagSymbol($symbol, $tag, $tokens, $code);
         $arguments = $this->getTagArguments($tag, $tokens, $code);
-        $tagCode = $this->compileTag($symbol, $name, $arguments, $tag, $tokens, $code);
+        $tagCode = $this->dispatchTagTypeCompiler($symbol, $name, $arguments, $tag, $tokens, $code);
         foreach ($symbols as $symbol) {
             $tagCode = $this->dispatchTagSymbolCompiler(
                 $symbol, $name, $arguments, $tagCode, $tag, $tokens, $code
@@ -628,26 +658,29 @@ class Compiler
      */
     public function dispatchTagSymbolCompiler($symbol, $name, array $arguments, $tagCode, $tag, array $tokens, $code)
     {
-        switch ($symbol) {
-            case '@.': return $this->compileTagMacro(
-                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
-            );
-            case '$': return $this->compileTagKeyholder(
-                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
-            );
-            case '^': return $this->compileTagUpperContext(
-                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
-            );
-            case '>': return $this->compileTagPartial(
-                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
-            );
-            case '&': return $this->compileTagPrinterUnescaped(
-                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
-            );
-            default: return $this->compileTagPrinter(
-                $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
-            );
+        $methodName = $this->getTagSymbolCompilerMethod($symbol, $name, $arguments, $tagCode, $tag, $tokens, $code);
+        return call_user_func(
+            array($this, $methodName),
+            $tagCode, $symbol, $name, $arguments, $tag, $tokens, $code
+        );
+    }
+
+    /**
+     * @param string $symbol
+     * @param string $name
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function dispatchTagTypeCompiler($symbol, $name, array $arguments, $tag, array $tokens, $code)
+    {
+        if ($this->isStringAConstant($name, $tokens, $code)) {
+            return $this->compileTagConstant($symbol, $name, $arguments, $tag, $tokens, $code);
+        } else if ($this->isStringAString($name, $tokens, $code)) {
+            return $this->compileTagString($symbol, $name, $arguments, $tag, $tokens, $code);
         }
+        return $this->compileTag($symbol, $name, $arguments, $tag, $tokens, $code);
     }
 
     /**
@@ -660,13 +693,13 @@ class Compiler
         return array(
             self::GLOBAL_CONTEXT,
             self::GLOBAL_CONTEXT_UPPER,
+            self::GLOBAL_ESCAPE,
             self::GLOBAL_FUNCTION,
             self::GLOBAL_ITERATOR,
             self::GLOBAL_IF,
             self::GLOBAL_KEY,
             self::GLOBAL_MACRO_DEFINE,
             self::GLOBAL_MACRO_INVOKE,
-            self::GLOBAL_PRINT,
             self::GLOBAL_UNLESS,
         );
     }
@@ -698,7 +731,7 @@ class Compiler
     public function getScope(array $range, array $tokens, $code)
     {
         $head = array_shift($range);
-        if (!$this->isTagBlock($head, $tokens, $code)) {
+        if (!$this->isTagABlock($head, $tokens, $code)) {
             return array($head);
         }
         $headName = $this->getTagName($head, $tokens, $code);
@@ -708,7 +741,7 @@ class Compiler
             $response[] = $tag;
             if ($index & 1) {
                 $tagName = $this->getTagName($tag, $tokens, $code);
-                if ($this->isTagClosing($tag, $tokens, $code)) {
+                if ($this->isTagAClosingTag($tag, $tokens, $code)) {
                     if (empty($stack) && $tagName === $headName) {
                         break;
                     }
@@ -716,7 +749,7 @@ class Compiler
                         array_pop($stack);
                     }
                 } else {
-                    if ($this->isTagBlock($tag, $tokens, $code)) {
+                    if ($this->isTagABlock($tag, $tokens, $code)) {
                         $stack[] = $tagName;
                     }
                 }
@@ -775,6 +808,49 @@ class Compiler
     }
 
     /**
+     * Compile given scope delimiters
+     *
+     * @param string $symbol
+     * @param array $scope
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function getScopeSymbolCompilerMethod($symbol, $scope, $tokens, $code)
+    {
+        switch ($symbol) {
+            case '!': return 'compileScopeUnless';
+            case '@': return 'compileScopeMacro';
+            case '?': return 'compileScopeIf';
+        }
+        return 'compileScopeIterator';
+    }
+
+    /**
+     * Compile given tag by symbol
+     *
+     * @param string $symbol
+     * @param string $name
+     * @param array $arguments
+     * @param string $tag
+     * @param string $tagCode
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function getTagSymbolCompilerMethod($symbol, $name, array $arguments, $tagCode, $tag, array $tokens, $code)
+    {
+        switch ($symbol) {
+            case '@.': return 'compileTagMacro';
+            case '$': return 'compileTagKeyholder';
+            case '^': return 'compileTagUpperContext';
+            case '>': return 'compileTagPartial';
+            case '&': return 'compileTagPrinterUnescaped';
+        }
+        return 'compileTagPrinter';
+    }
+
+    /**
      * Check if given scope is actually a tag
      *
      * @param array $scope
@@ -782,16 +858,29 @@ class Compiler
      * @param string $code
      * @return boolean
      */
-    public function isScopeTag(array $scope, array $tokens, $code)
+    public function isScopeATag(array $scope, array $tokens, $code)
     {
         return count($scope) === 1;
     }
 
     /**
      * @param string $string
+     * @param array $tokens
+     * @param string $code
      * @return boolean
      */
-    public function isStringString($string)
+    public function isStringAConstant($string, array $tokens, $code)
+    {
+        return is_numeric($string) || $string === 'true' || $string === 'false';
+    }
+
+    /**
+     * @param string $string
+     * @param array $tokens
+     * @param string $code
+     * @return boolean
+     */
+    public function isStringAString($string, array $tokens, $code)
     {
         return preg_match('/^"(?:[^"\\\\]|\\\\.)*"$/', $string);
     }
@@ -805,7 +894,7 @@ class Compiler
      * @param string $code
      * @return boolean
      */
-    public function isSymbolBlock($symbol, $tag, array $tokens, $code)
+    public function isSymbolABlock($symbol, $tag, array $tokens, $code)
     {
         $symbol = trim($symbol);
         if (strlen($symbol) < 1) {
@@ -823,7 +912,7 @@ class Compiler
      * @param string $code
      * @return boolean
      */
-    public function isSymbolClosing($symbol, $tag, array $tokens, $code)
+    public function isSymbolAClosingSymbol($symbol, $tag, array $tokens, $code)
     {
         $symbol = trim($symbol);
         return $symbol === '/';
@@ -837,10 +926,10 @@ class Compiler
      * @param string $code
      * @return boolean
      */
-    public function isTagBlock($tag, array $tokens, $code)
+    public function isTagABlock($tag, array $tokens, $code)
     {
         $symbol = $this->getTagSymbol($tag, $tokens, $code);
-        return $this->isSymbolBlock($symbol, $tag, $tokens, $code);
+        return $this->isSymbolABlock($symbol, $tag, $tokens, $code);
     }
 
     /**
@@ -851,10 +940,10 @@ class Compiler
      * @param string $code
      * @return boolean
      */
-    public function isTagClosing($tag, array $tokens, $code)
+    public function isTagAClosingTag($tag, array $tokens, $code)
     {
         $symbol = $this->getTagSymbol($tag, $tokens, $code);
-        return $this->isSymbolClosing($symbol, $tag, $tokens, $code);
+        return $this->isSymbolAClosingSymbol($symbol, $tag, $tokens, $code);
     }
 
     /**
@@ -889,7 +978,7 @@ class Compiler
      * @param array $context
      * @return array
      */
-    public function tokenize($code)
+    public function tokenizeCode($code)
     {
         $response = array();
         $tokens = explode(self::TAG_DELIMITER_OPEN, $code);
