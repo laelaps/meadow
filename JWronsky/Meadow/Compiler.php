@@ -10,6 +10,8 @@ class Compiler
 
     const TAG_DELIMITER_CLOSE = '}}';
     const TAG_DELIMITER_OPEN = '{{';
+    const TAG_ESCAPER = '\\';
+    const TAG_FILTER_SEPARATOR = '|';
 
     const GLOBAL_CONTEXT = 'ctx';
     const GLOBAL_CONTEXT_UPPER = 'utx';
@@ -338,7 +340,9 @@ class Compiler
         $argumentsList = array();
         if (!empty($arguments)) {
             foreach ($arguments as $argument) {
-                $argumentsList[] = $this->compileTag($symbol, $argument, array(), $tag, $tokens, $code);
+                $argumentsList[] = $this->dispatchTagTypeCompiler(
+                    $symbol, $argument, array(), $tag, $tokens, $code
+                );
             }
         }
         return $argumentsList;
@@ -767,13 +771,8 @@ class Compiler
      */
     public function getTagArguments($tag, array $tokens, $code)
     {
-        if (!preg_match('/\s/s', $tag)) {
-            return array();
-        }
-        preg_match_all('/(([a-zA-Z0-9]+)|("(?:[^"\\\\]|\\\\.)*"))/', $tag, $arguments);
-        $arguments = $arguments[0];
-        array_shift($arguments);
-        return $arguments;
+        $arguments = $this->trimTagName($tag, $tokens, $code);
+        return $this->tokenizeArguments($arguments, $tokens, $code);
     }
 
     /**
@@ -919,6 +918,39 @@ class Compiler
     }
 
     /**
+     * @param string $symbol
+     * @param array $tokens
+     * @param string $code
+     * @return boolean
+     */
+    public function isSymbolAFilterSeparator($symbol, array $tokens, $code)
+    {
+        return $symbol === self::TAG_FILTER_SEPARATOR;
+    }
+
+    /**
+     * @param string $string
+     * @param array $tokens
+     * @param string $code
+     * @return boolean
+     */
+    public function isSymbolAStringDelimiter($string, array $tokens, $code)
+    {
+        return $string === '"';
+    }
+
+    /**
+     * @param string $symbol
+     * @param array $tokens
+     * @param string $code
+     * @return boolean
+     */
+    public function isSymbolAnEscaper($symbol, array $tokens, $code)
+    {
+        return $symbol === self::TAG_ESCAPER;
+    }
+
+    /**
      * Check if given tag is block tag
      *
      * @param string $tag
@@ -958,6 +990,52 @@ class Compiler
             throw new RuntimeException('Given file is not readable or does not exist: ' . $filename);
         }
         return file_get_contents($filename);
+    }
+
+    /**
+     * @param string $arguments
+     * @param array $tokens
+     * @param string $code
+     * @return array
+     */
+    public function rtrimFilters($arguments, array $tokens, $code)
+    {
+        $response = array();
+        $phrase = str_split($arguments);
+        $isEscaped = false;
+        $isInString = false;
+        foreach ($phrase as $character) {
+            if ($this->isSymbolAStringDelimiter($character, $tokens, $code)) {
+                if (!$isEscaped) {
+                    $isInString = !$isInString;
+                } else {
+                    $isEscaped = false;
+                }
+            } else if ($this->isSymbolAnEscaper($character, $tokens, $code)) {
+                $isEscaped = !$isEscaped;
+            } else if ($this->isSymbolAFilterSeparator($character, $tokens, $code)) {
+                if (!$isInString) {
+                    return implode($response);
+                }
+            }
+            $response[] = $character;
+        }
+        return implode($response);
+    }
+
+    /**
+     * @param string $arguments
+     * @param array $tokens
+     * @param string $code
+     * @return array
+     */
+    public function tokenizeArguments($arguments, array $tokens, $code)
+    {
+        $response = array();
+        $arguments = $this->rtrimFilters($arguments, $tokens, $code);
+        preg_match_all('/(([a-zA-Z0-9]+)|("(?:[^"\\\\]|\\\\.)*"))/', $arguments, $arguments);
+        $arguments = $arguments[0];
+        return $arguments;
     }
 
     /**
@@ -1022,6 +1100,19 @@ class Compiler
     {
         $string = trim($string, '"');
         return trim($string, '\'');
+    }
+
+    /**
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return array
+     */
+    public function trimTagName($tag, array $tokens, $code)
+    {
+        $tagName = $this->getTagName($tag, $tokens, $code);
+        $tag = substr($tag, strlen($tagName));
+        return ltrim($tag);
     }
 
 }
