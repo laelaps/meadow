@@ -309,7 +309,9 @@ class Compiler
                     $this->compileTag(
                         $symbol, $name, array(), null, $tokens, $code
                     ),
+                    $this->compileVariable(self::GLOBAL_KEY, $tokens, $code),
                     $this->compileVariable(self::GLOBAL_CONTEXT, $tokens, $code),
+                    $this->compileVariable(self::GLOBAL_CONTEXT_UPPER, $tokens, $code),
                     $this->compileFunction(
                         $internalVariables,
                         $this->getGlobalsExclude(
