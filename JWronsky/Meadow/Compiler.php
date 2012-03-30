@@ -75,6 +75,50 @@ class Compiler
     }
 
     /**
+     * @param string $body
+     * @param string $filter
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileFilter($body, $filter, array $tokens, $code)
+    {
+        $items = $this->tokenizeArguments($filter, $tokens, $code);
+        return $this->compileVariableInvoke(
+            self::GLOBAL_FUNCTION,
+            array_merge(
+                array(
+                    $body,
+                    $this->compileVariable(self::GLOBAL_KEY, $tokens, $code),
+                    $this->compileVariable(self::GLOBAL_CONTEXT, $tokens, $code),
+                    $this->compileVariable(self::GLOBAL_CONTEXT_UPPER, $tokens, $code),
+                ),
+                $this->compileTagArgumentsList(null, null, $items, null, $tokens, $code)
+            ), $tokens, $code
+        );
+    }
+
+    /**
+     * Compile given tag by symbol
+     *
+     * @param string $body
+     * @param string $tag
+     * @param string $tagCode
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileFilters($body, $filters, array $tokens, $code)
+    {
+        $filters = $this->tokenizeFilters($filters, $tokens, $code);
+        $response = $body;
+        foreach ($filters as $filter) {
+            $response = $this->compileFilter($response, $filter, $tokens, $code);
+        }
+        return $response;
+    }
+
+    /**
      * @param array $arguments
      * @param array $uses
      * @param array $tokens
@@ -640,6 +684,9 @@ class Compiler
         $symbols = $this->tokenizeTagSymbol($symbol, $tag, $tokens, $code);
         $arguments = $this->getTagArguments($tag, $tokens, $code);
         $tagCode = $this->dispatchTagTypeCompiler($symbol, $name, $arguments, $tag, $tokens, $code);
+        $tagCode = $this->compileFilters(
+            $tagCode, $this->getTagFilters($tag, $tokens, $code), $tokens, $code
+        );
         foreach ($symbols as $symbol) {
             $tagCode = $this->dispatchTagSymbolCompiler(
                 $symbol, $name, $arguments, $tagCode, $tag, $tokens, $code
@@ -773,6 +820,22 @@ class Compiler
     {
         $arguments = $this->trimTagName($tag, $tokens, $code);
         return $this->tokenizeArguments($arguments, $tokens, $code);
+    }
+
+    /**
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return array
+     */
+    public function getTagFilters($tag, array $tokens, $code)
+    {
+        $head = $this->rtrimFilters($tag, $tokens, $code);
+        $filters = substr($tag, strlen($head));
+        $filters = ltrim($filters);
+        $filters = ltrim($filters, self::TAG_FILTER_SEPARATOR);
+        $filters = ltrim($filters);
+        return $filters;
     }
 
     /**
@@ -979,6 +1042,19 @@ class Compiler
     }
 
     /**
+     * @param string $filters
+     * @param array $tokens
+     * @param string $code
+     * @return boolean
+     */
+    public function lchopFilters($filters, array $tokens, $code)
+    {
+        $head = $this->rtrimFilters($filters, $tokens, $code);
+        $headLength = (strlen($head) + strlen(self::TAG_FILTER_SEPARATOR));
+        return substr($filters, $headLength);
+    }
+
+    /**
      * @param filename $tag
      * @param array $tokens
      * @param string $code
@@ -1064,6 +1140,25 @@ class Compiler
             $response = array_merge(
                 $response, explode(self::TAG_DELIMITER_CLOSE, $token)
             );
+        }
+        return $response;
+    }
+
+    /**
+     * @param string $filters
+     * @param array $tokens
+     * @param string $code
+     * @return array
+     */
+    public function tokenizeFilters($filters, array $tokens, $code)
+    {
+        $response = array();
+        while (strlen($filters) > 0) {
+            $appendice = $this->rtrimFilters($filters, $tokens, $code);
+            if (strlen($appendice) > 0) {
+                $response[] = trim($appendice);
+            }
+            $filters = $this->lchopFilters($filters, $tokens, $code);
         }
         return $response;
     }
