@@ -88,10 +88,11 @@ class Compiler
             self::GLOBAL_FUNCTION,
             array_merge(
                 array(
-                    $body,
+                    $this->compileString(array_shift($items), $tokens, $code),
                     $this->compileVariable(self::GLOBAL_KEY, $tokens, $code),
                     $this->compileVariable(self::GLOBAL_CONTEXT, $tokens, $code),
                     $this->compileVariable(self::GLOBAL_CONTEXT_UPPER, $tokens, $code),
+                    $body,
                 ),
                 $this->compileTagArgumentsList(null, null, $items, null, $tokens, $code)
             ), $tokens, $code
