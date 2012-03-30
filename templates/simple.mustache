@@ -85,3 +85,22 @@ HALT!
 {{hi 2 hello 2}}
 {{&hi 2 hello 2}}
 {{foo bar " foo \"' " | baz "foo bar " foo | booz foor}}
+
+
+{{hello.0.foo}}
+{{hello.2.foo}}
+
+{{#hello}}
+	$({{$}}) => foo({{foo}}), {^foo}({{^foo}})!<br>
+{{/hello}}
+
+{{?foo}}
+	foo is truthy ({{foo}})
+{{/foo}}
+
+{{!foo}}
+	foo is falsy ({{foo}})
+{{/foo}}
+
+{{polygraph "hello" | ucfirst | upper}}
+

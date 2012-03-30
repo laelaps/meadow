@@ -1,16 +1,1 @@
-{{hello.0.foo}}
-{{hello.2.foo}}
-
-{{#hello}}
-	$({{$}}) => foo({{foo}}), {^foo}({{^foo}})!<br>
-{{/hello}}
-
-{{?foo}}
-	foo is truthy ({{foo}})
-{{/foo}}
-
-{{!foo}}
-	foo is falsy ({{foo}})
-{{/foo}}
-
-{{polygraph "hello" | ucfirst | upper}}
+{{&js_files}}

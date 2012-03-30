@@ -1126,7 +1126,7 @@ class Compiler
     {
         $response = array();
         $arguments = $this->rtrimFilters($arguments, $tokens, $code);
-        preg_match_all('/(([a-zA-Z0-9]+)|("(?:[^"\\\\]|\\\\.)*"))/', $arguments, $arguments);
+        preg_match_all('/(([a-zA-Z0-9_]+)|("(?:[^"\\\\]|\\\\.)*"))/', $arguments, $arguments);
         $arguments = $arguments[0];
         return $arguments;
     }
@@ -1222,8 +1222,9 @@ class Compiler
      */
     public function trimTagName($tag, array $tokens, $code)
     {
+        $tagSymbol = $this->getTagSymbol($tag, $tokens, $code);
         $tagName = $this->getTagName($tag, $tokens, $code);
-        $tag = substr($tag, strlen($tagName));
+        $tag = substr($tag, strlen($tagSymbol) + strlen($tagName));
         return ltrim($tag);
     }
 
