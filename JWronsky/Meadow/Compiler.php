@@ -1,5 +1,7 @@
 <?php namespace JWronsky\Meadow;
 
+use InvalidArgumentException;
+
 /**
  * @todo use actual Mustache for syntax checking
  * @todo filters -> $ivk($tag, 'filter_name')
@@ -40,16 +42,28 @@ class Compiler
         '>' => 'partial',
     );
 
+    public function __construct()
+    {
+        $this->lint = new Lint();
+    }
+
     /**
      * @param string $code
      * @param string $filename
      * @return string
+     * @throws InvalidArgumentException If syntax error occurred.
      */
     public function compile($code, $filename)
     {
-        $response = array();
-        $tokens = $this->tokenizeCode($code);
-        return $this->compileTokens($tokens, $code);
+        if ($this->lint->isOk($code)) {
+            $response = array();
+            $tokens = $this->tokenizeCode($code);
+            return $this->compileTokens($tokens, $code);
+        } else {
+            throw new InvalidArgumentException(
+                'Syntax error occurred in file: "' . $filename . '".'
+            );
+        }
     }
 
     /**
