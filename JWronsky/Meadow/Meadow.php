@@ -1,6 +1,9 @@
 <?php namespace JWronsky\Meadow;
 
 use Closure;
+use DomainException;
+use Duck;
+use LogicException;
 
 class Meadow
 {
@@ -13,9 +16,19 @@ class Meadow
     protected $compiler = null;
 
     /**
-     * @var Lint
+     * @var array
      */
-    protected $lint = null;
+    protected $globalsCache = null;
+
+    /**
+     * @var Duck
+     */
+    protected $duck = null;
+
+    /**
+     * @var array
+     */
+    protected $templateFunctionsCache = array();
 
     /**
      * @param string $template
@@ -30,7 +43,9 @@ class Meadow
             extract($globals);
             require $filename;
         };
+        ob_start();
         $scope($filename);
+        return ob_get_clean();
     }
 
     /**
@@ -79,6 +94,26 @@ class Meadow
     }
 
     /**
+     * @return Duck
+     */
+    public function getDuck()
+    {
+        if (!$this->duck instanceof Duck) {
+            $this->duck = new Duck();
+        }
+        return $this->duck;
+    }
+
+    /**
+     * @param string $template
+     * @return string
+     */
+    public function getTemplateCacheFilename($template)
+    {
+        return $this->cacheDirectory . sha1($template) . '.php';
+    }
+
+    /**
      * @param string $name
      * @param array $cotnext
      * @return function|object
@@ -88,94 +123,201 @@ class Meadow
         switch ($name)
         {
             case Compiler::GLOBAL_CONTEXT:
-                return function ($item) use ($context) {
-                    if (strpos($item, '.') !== false) {
-                        $items = explode('.', $item);
-                        $item = $context;
-                        foreach ($items as $name) {
-                            if ($item[$name]) {
-                                $item = $item[$name];
-                            }
-                        }
-                    } else {
-                        $item = $context[$item];
-                    }
-                    if (is_callable($item)) {
-                        $tail = func_get_args();
-                        array_shift($tail);
-                        return call_user_func_array($item, $tail);
-                    }
-                    return $item;
-                };
+                return $this->getTemplateGlobalContext($name, $context);
             break;
             case Compiler::GLOBAL_CONTEXT_UPPER:
-                return function ($item) {
-                    return htmlentities($item);
-                };
+                return $this->getTemplateGlobalContext($name, $context);
             break;
             case Compiler::GLOBAL_ESCAPE:
-                return function ($item) {
-                    if (!is_string($item)) {
-                        $item = strval($item);
-                    }
-                    return htmlentities($item);
-                };
+                return $this->getTemplateGlobalEscape($name, $context);
             break;
             case Compiler::GLOBAL_FUNCTION:
-                // $fun('upper',$key,$ctx,$utx,
-                return function ($name, $key, $context, $contextUpper, $item) {
-                    if ($name === 'upper') {
-                        return strtoupper($item);
-                    }
-                    if ($name === 'ucfirst') {
-                        return ucfirst($item);
-                    }
-                    return $item;
-                };
-            break;
-            case Compiler::GLOBAL_IF:
-                return function ($item, $key, $context, $contextUpper, Closure $callback) {
-                    if (!empty($item)) {
-                        $callback($key, $context, $contextUpper);
-                    }
-                };
+                return $this->getTemplateGlobalFunction($name, $context);
             break;
             case Compiler::GLOBAL_ITERATOR:
-                // $itr($ctx('hello'),$key,$ctx,$utx,function($key,$ctx,$utx)
-                return function ($item, $key, $context, $contextUpper, Closure $callback) {
-                    foreach ($item as $key => $value) {
-                        $callback(
-                            $key, function ($item) use ($value) {
-                                return $value[$item];
-                            }, $context
-                        );
-                    }
-                };
+                return $this->getTemplateGlobalIterator($name, $context);
             break;
             case Compiler::GLOBAL_KEY:
-                return function ($item) {
-                    return htmlentities($item);
-                };
+                return $this->getTemplateGlobalKey($name, $context);
             break;
             case Compiler::GLOBAL_MACRO_DEFINE:
-                return function ($item) {
-                    return htmlentities($item);
-                };
+                return $this->getTemplateGlobalMacroDefine($name, $context);
             break;
             case Compiler::GLOBAL_MACRO_INVOKE:
-                return function ($item) {
-                    return htmlentities($item);
-                };
+                return $this->getTemplateGlobalMacroInvoke($name, $context);
             break;
-            case Compiler::GLOBAL_UNLESS:
-                return function ($item, $key, $context, $contextUpper, Closure $callback) {
-                    if (empty($item)) {
-                        $callback($key, $context, $contextUpper);
-                    }
-                };
+            case Compiler::GLOBAL_TRUTH:
+                return $this->getTemplateGlobalTruth($name, $context);
             break;
         }
-        return;
+        throw new DomainException(
+            'Unsupported global variable: "' . $name . '".'
+        );
+    }
+
+    /**
+     * Get template global context support variable
+     *
+     * @param string $name
+     * @param array $context
+     * @return function
+     */
+    public function getTemplateGlobalContext($name, $context)
+    {
+        $cache = array();
+        $duck = $this->getDuck();
+        return function ($item/*, polymorphic */) use ($cache, $context, $duck) {
+            if (empty($item)) {
+                return $context;
+            }
+            if (array_key_exists($item, $cache)) {
+                return $cache[$item];
+            }
+            $response = $duck->dothusk($context, $item, $isLoud = true);
+            if ($duck->isFunction($response)) {
+                $arguments = func_get_args();
+                array_shift($arguments);
+                return call_user_func_array($response, $arguments);
+            } else {
+                $cache[$item] = $response;
+            }
+            return $response;
+        };
+    }
+
+    /**
+     * @param string $name
+     * @param array $context
+     * @return function
+     */
+    public function getTemplateGlobalEscape($name, array $context)
+    {
+        return function ($item) {
+            if (!is_string($item)) {
+                $item = strval($item);
+            }
+            return htmlentities($item);
+        };
+    }
+
+    /**
+     * @param string $name
+     * @param array $context
+     * @return function
+     */
+    public function getTemplateGlobalFunction($name, array $context)
+    {
+        $self = $this;
+        return function ($name, $key, $context, $contextUpper, $item/*, polymorphic */) use ($self) {
+            $function = $self->getTemplateGlobalFunctionFunction($name);
+            if (!is_array($function)) {
+                return call_user_func_array(
+                    $function, array_slice(func_get_args(), 4)
+                );
+            }
+            return call_user_func_array(
+                $function, array_merge(
+                    array($item, $item), array_slice(func_get_args(), 5)
+                )
+            );
+        };
+    }
+
+    public function getTemplateGlobalFunctionFunction($name)
+    {
+        if (array_key_exists($name, $this->templateFunctionsCache)) {
+            return array($this->templateFunctionsCache[$name], 'render');
+        }
+        $className = '\Mustache\Filter\\' . $name;
+        if (!class_exists($className)) {
+            return $name;
+        }
+        $instance = new $className();
+        $this->templateFunctionsCache[$name] = $instance;
+        return array($instance, 'render');
+    }
+
+    /**
+     * @param string $name
+     * @param array $context
+     * @return function
+     */
+    public function getTemplateGlobalIterator($name, array $context)
+    {
+        // $itr($ctx('hello'),$key,$ctx,$utx,function($key,$ctx,$utx)
+        $self = $this;
+        $duck = $this->getDuck();
+        return function ($item, $key, $context, $contextUpper, Closure $callback) use ($duck, $self) {
+            if ($duck->isEmpty($item)) {
+                return false;
+            }
+            if ( is_array($item)
+              || $item instanceof Traversable
+              || is_a($item, 'Traversable')
+            ) {
+                foreach ($item as $key => $value) {
+                    $callback(
+                        $key, $self->getTemplateGlobalContext(
+                            Compiler::GLOBAL_CONTEXT, $value
+                        ), $context
+                    );
+                }
+            } else if ($item) {
+                $callback($key, $context, $item);
+            }
+        };
+    }
+
+    /**
+     * @param string $name
+     * @param array $context
+     * @return function
+     */
+    public function getTemplateGlobalKey($name, array $context)
+    {
+        return function ($item) {
+            return htmlentities($item);
+        };
+    }
+
+    /**
+     * @param string $name
+     * @param array $context
+     * @return function
+     */
+    public function getTemplateGlobalMacroDefine($name, array $context)
+    {
+        return function () {
+            throw new LogicException('Macro defining is not implemented yet.');
+        };
+    }
+
+    /**
+     * @param string $name
+     * @param array $context
+     * @return function
+     */
+    public function getTemplateGlobalMacroInvoke($name, array $context)
+    {
+        return function () {
+            throw new LogicException('Macro invoking is not implemented yet.');
+        };
+    }
+
+    /**
+     * @param string $name
+     * @param array $context
+     * @return function
+     */
+    public function getTemplateGlobalTruth($name, array $context)
+    {
+        $duck = $this->getDuck();
+        return function ($item) use($duck) {
+            if ($duck->isFunction($item)) {
+                $item = $item();
+            }
+            return !$duck->isEmpty($item);
+        };
     }
 
     /**
@@ -190,26 +332,16 @@ class Meadow
             Compiler::GLOBAL_CONTEXT_UPPER => null,
             Compiler::GLOBAL_ESCAPE => null,
             Compiler::GLOBAL_FUNCTION => null,
-            Compiler::GLOBAL_IF => null,
             Compiler::GLOBAL_ITERATOR => null,
             Compiler::GLOBAL_KEY => null,
             Compiler::GLOBAL_MACRO_DEFINE => null,
             Compiler::GLOBAL_MACRO_INVOKE => null,
-            Compiler::GLOBAL_UNLESS => null,
+            Compiler::GLOBAL_TRUTH => null,
         );
         foreach ($globals as $name => $value) {
             $globals[$name] = $this->getTemplateGlobal($name, $context);
         }
         return $globals;
-    }
-
-    /**
-     * @param string $template
-     * @return string
-     */
-    public function getTemplateCacheFilename($template)
-    {
-        return $this->cacheDirectory . sha1($template) . '.php';
     }
 
     /**

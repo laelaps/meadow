@@ -1,6 +1,7 @@
 <?php namespace JWronsky\Meadow;
 
 use InvalidArgumentException;
+use RuntimeException;
 
 /**
  * @todo use actual Mustache for syntax checking
@@ -15,16 +16,15 @@ class Compiler
     const TAG_ESCAPER = '\\';
     const TAG_FILTER_SEPARATOR = '|';
 
-    const GLOBAL_CONTEXT = 'ctx';
-    const GLOBAL_CONTEXT_UPPER = 'utx';
-    const GLOBAL_ESCAPE = 'esc';
-    const GLOBAL_FUNCTION = 'fun';
-    const GLOBAL_IF = 'ifd';
-    const GLOBAL_ITERATOR = 'itr';
-    const GLOBAL_KEY = 'key';
-    const GLOBAL_MACRO_DEFINE = 'def';
-    const GLOBAL_MACRO_INVOKE = 'ivk';
-    const GLOBAL_UNLESS = 'unl';
+    const GLOBAL_CONTEXT = 'c';
+    const GLOBAL_CONTEXT_UPPER = 'u';
+    const GLOBAL_ESCAPE = 'e';
+    const GLOBAL_FUNCTION = 'f';
+    const GLOBAL_ITERATOR = 'i';
+    const GLOBAL_KEY = 'k';
+    const GLOBAL_MACRO_DEFINE = 'd';
+    const GLOBAL_MACRO_INVOKE = 'a';
+    const GLOBAL_TRUTH = 't';
 
     protected $blocks = array(
         '@' => 'macro',
@@ -35,11 +35,13 @@ class Compiler
     );
 
     protected $mnemonics = array(
+        '\\' => 'comment',
+        '~' => 'NOOP',
         '@.' => 'runMacro',
         '$' => 'key',
-        '&' => 'unescaped',
         '^' => 'upperContext',
         '>' => 'partial',
+        '&' => 'unescaped',
     );
 
     public function __construct()
@@ -98,16 +100,21 @@ class Compiler
     public function compileFilter($body, $filter, array $tokens, $code)
     {
         $items = $this->tokenizeArguments($filter, $tokens, $code);
+        $arguments = array(
+            $this->compileString(array_shift($items), $tokens, $code),
+            $this->compileVariable(self::GLOBAL_KEY, $tokens, $code),
+            $this->compileVariable(self::GLOBAL_CONTEXT, $tokens, $code),
+            $this->compileVariable(self::GLOBAL_CONTEXT_UPPER, $tokens, $code)
+        );
+        if (!empty($body)) {
+            $arguments[] = $body;
+        } else {
+            $arguments[] = 'null';
+        }
         return $this->compileVariableInvoke(
             self::GLOBAL_FUNCTION,
             array_merge(
-                array(
-                    $this->compileString(array_shift($items), $tokens, $code),
-                    $this->compileVariable(self::GLOBAL_KEY, $tokens, $code),
-                    $this->compileVariable(self::GLOBAL_CONTEXT, $tokens, $code),
-                    $this->compileVariable(self::GLOBAL_CONTEXT_UPPER, $tokens, $code),
-                    $body,
-                ),
+                $arguments,
                 $this->compileTagArgumentsList(null, null, $items, null, $tokens, $code)
             ), $tokens, $code
         );
@@ -208,9 +215,20 @@ class Compiler
      */
     public function compileScopeIf($symbol, $name, array $arguments, array $scope, array $tokens, $code)
     {
-        return $this->compileScopeVariableCall(
-            self::GLOBAL_IF, $symbol, $name, $arguments, $scope, $tokens, $code
-        );
+        return $this->compileDelimitersExternal(
+            'if('
+            . $this->compileVariableInvoke(
+                self::GLOBAL_TRUTH,
+                array(
+                    $this->compileTag($symbol, $name, array(), null, $tokens, $code),
+                ),
+                $tokens, $code
+            )
+            . '){'
+            , $tokens, $code
+        )
+        . $this->compileTokens($scope, $code)
+        . $this->compileDelimitersExternal('}', $tokens, $code);
     }
 
     /**
@@ -280,9 +298,20 @@ class Compiler
      */
     public function compileScopeUnless($symbol, $name, array $arguments, array $scope, array $tokens, $code)
     {
-        return $this->compileScopeVariableCall(
-            self::GLOBAL_UNLESS, $symbol, $name, $arguments, $scope, $tokens, $code
-        );
+        return $this->compileDelimitersExternal(
+            'if(!('
+            . $this->compileVariableInvoke(
+                self::GLOBAL_TRUTH,
+                array(
+                    $this->compileTag($symbol, $name, array(), null, $tokens, $code),
+                ),
+                $tokens, $code
+            )
+            . ')){'
+            , $tokens, $code
+        )
+        . $this->compileTokens($scope, $code)
+        . $this->compileDelimitersExternal('}', $tokens, $code);
     }
 
     /**
@@ -379,8 +408,13 @@ class Compiler
      */
     public function compileTag($symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
+        if ($this->isSymbolAnUpperContext($symbol, $tokens, $code)) {
+            $context = self::GLOBAL_CONTEXT_UPPER;
+        } else {
+            $context = self::GLOBAL_CONTEXT;
+        }
         return $this->compileVariableInvoke(
-            self::GLOBAL_CONTEXT, array_merge(
+            $context, array_merge(
                 array($this->compileString($name, $tokens, $code)),
                 $this->compileTagArgumentsList($symbol, $name, $arguments, $tag, $tokens, $code)
             ), $tokens, $code
@@ -407,6 +441,23 @@ class Compiler
             }
         }
         return $argumentsList;
+    }
+
+    /**
+     * @param string $tagCode
+     * @param string $symbol
+     * @param string $name
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function compileTagCommented($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
+    {
+        return $this->compileString(
+            self::TAG_DELIMITER_OPEN . $name . self::TAG_DELIMITER_CLOSE,
+            $tokens, $code
+        );
     }
 
     /**
@@ -475,6 +526,20 @@ class Compiler
      * @param string $code
      * @return string
      */
+    public function compileTagNoop($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
+    {
+        return $tagCode;
+    }
+
+    /**
+     * @param string $tagCode
+     * @param string $symbol
+     * @param string $name
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
     public function compileTagPartial($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
         return $this->compile(
@@ -495,15 +560,13 @@ class Compiler
     public function compileTagPrinter($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
         return $this->compileDelimitersExternal(
-                 'echo ' .
-                 $this->compileVariableInvoke(
+                'echo '
+                . $this->compileVariableInvoke(
                      self::GLOBAL_ESCAPE,
                      array(
-                         $tagCode
-                     ),
-                     $tokens, $code
-                 ),
-                 $tokens, $code
+                        'strval(' . $tagCode . ')'
+                     ),$tokens, $code
+                ), $tokens, $code
              );
     }
 
@@ -518,7 +581,7 @@ class Compiler
      */
     public function compileTagPrinterUnescaped($tagCode, $symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
-        return $this->compileDelimitersExternal('echo ' . $tagCode, $tokens, $code);
+        return $this->compileDelimitersExternal('echo strval(' . $tagCode . ')', $tokens, $code);
     }
 
     /**
@@ -696,6 +759,8 @@ class Compiler
      */
     public function dispatchTagCompiler($tag, array $tokens, $code)
     {
+        $tag = $this->sanitizeTagCode($tag, $tokens, $code);
+
         $name = $this->getTagName($tag, $tokens, $code);
         $symbol = $this->getTagSymbol($tag, $tokens, $code);
         $symbols = $this->tokenizeTagSymbol($symbol, $tag, $tokens, $code);
@@ -743,9 +808,11 @@ class Compiler
      */
     public function dispatchTagTypeCompiler($symbol, $name, array $arguments, $tag, array $tokens, $code)
     {
-        if ($this->isStringAConstant($name, $tokens, $code)) {
+        if ($this->isSymbolANoop($symbol, $tag, $tokens, $code)) {
+            return null;
+        } elseif ($this->isStringAConstant($name, $tokens, $code)) {
             return $this->compileTagConstant($symbol, $name, $arguments, $tag, $tokens, $code);
-        } else if ($this->isStringAString($name, $tokens, $code)) {
+        } elseif ($this->isStringAString($name, $tokens, $code)) {
             return $this->compileTagString($symbol, $name, $arguments, $tag, $tokens, $code);
         }
         return $this->compileTag($symbol, $name, $arguments, $tag, $tokens, $code);
@@ -764,11 +831,10 @@ class Compiler
             self::GLOBAL_ESCAPE,
             self::GLOBAL_FUNCTION,
             self::GLOBAL_ITERATOR,
-            self::GLOBAL_IF,
             self::GLOBAL_KEY,
             self::GLOBAL_MACRO_DEFINE,
             self::GLOBAL_MACRO_INVOKE,
-            self::GLOBAL_UNLESS,
+            self::GLOBAL_TRUTH,
         );
     }
 
@@ -897,10 +963,12 @@ class Compiler
      */
     public function getScopeSymbolCompilerMethod($symbol, $scope, $tokens, $code)
     {
-        switch ($symbol) {
-            case '!': return 'compileScopeUnless';
-            case '@': return 'compileScopeMacro';
-            case '?': return 'compileScopeIf';
+        if (strpos($symbol, '!') !== false) {
+            return 'compileScopeUnless';
+        } elseif (strpos($symbol, '@') !== false) {
+            return 'compileScopeMacro';
+        } elseif (strpos($symbol, '?') !== false) {
+            return 'compileScopeIf';
         }
         return 'compileScopeIterator';
     }
@@ -920,11 +988,13 @@ class Compiler
     public function getTagSymbolCompilerMethod($symbol, $name, array $arguments, $tagCode, $tag, array $tokens, $code)
     {
         switch ($symbol) {
+            case '\\': return 'compileTagCommented';
             case '@.': return 'compileTagMacro';
             case '$': return 'compileTagKeyholder';
             case '^': return 'compileTagUpperContext';
             case '>': return 'compileTagPartial';
             case '&': return 'compileTagPrinterUnescaped';
+            case '~': return 'compileTagNoop';
         }
         return 'compileTagPrinter';
     }
@@ -950,7 +1020,11 @@ class Compiler
      */
     public function isStringAConstant($string, array $tokens, $code)
     {
-        return is_numeric($string) || $string === 'true' || $string === 'false';
+        $string = strtolower($string);
+        return is_numeric($string)
+            || $string === 'null'
+            || $string === 'true'
+            || $string === 'false';
     }
 
     /**
@@ -979,7 +1053,12 @@ class Compiler
         if (strlen($symbol) < 1) {
             return false;
         }
-        return array_key_exists($symbol, $this->blocks);
+        foreach ($this->blocks as $blockSymbol => $description) {
+            if (strpos($symbol, $blockSymbol) !== false) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -994,7 +1073,7 @@ class Compiler
     public function isSymbolAClosingSymbol($symbol, $tag, array $tokens, $code)
     {
         $symbol = trim($symbol);
-        return $symbol === '/';
+        return strpos($symbol, '/') !== false;
     }
 
     /**
@@ -1006,6 +1085,20 @@ class Compiler
     public function isSymbolAFilterSeparator($symbol, array $tokens, $code)
     {
         return $symbol === self::TAG_FILTER_SEPARATOR;
+    }
+
+    /**
+     * Check if given symbol is block like
+     *
+     * @param string $symbol
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return boolean
+     */
+    public function isSymbolANoop($symbol, $tag, array $tokens, $code)
+    {
+        return (strpos($symbol, '~') !== false);
     }
 
     /**
@@ -1028,6 +1121,17 @@ class Compiler
     public function isSymbolAnEscaper($symbol, array $tokens, $code)
     {
         return $symbol === self::TAG_ESCAPER;
+    }
+
+    /**
+     * @param string $symbol
+     * @param array $tokens
+     * @param string $code
+     * @return boolean
+     */
+    public function isSymbolAnUpperContext($symbol, array $tokens, $code)
+    {
+        return strpos($symbol, '^') !== false;
     }
 
     /**
@@ -1067,7 +1171,7 @@ class Compiler
     public function lchopFilters($filters, array $tokens, $code)
     {
         $head = $this->rtrimFilters($filters, $tokens, $code);
-        $headLength = (strlen($head) + strlen(self::TAG_FILTER_SEPARATOR));
+        $headLength = strlen($head) + strlen(self::TAG_FILTER_SEPARATOR);
         return substr($filters, $headLength);
     }
 
@@ -1083,6 +1187,17 @@ class Compiler
             throw new RuntimeException('Given file is not readable or does not exist: ' . $filename);
         }
         return file_get_contents($filename);
+    }
+
+    /**
+     * @param string $tag
+     * @param array $tokens
+     * @param string $code
+     * @return string
+     */
+    public function sanitizeTagCode($tag, array $tokens, $code)
+    {
+        return trim($tag);
     }
 
     /**
@@ -1104,9 +1219,9 @@ class Compiler
                 } else {
                     $isEscaped = false;
                 }
-            } else if ($this->isSymbolAnEscaper($character, $tokens, $code)) {
+            } elseif ($this->isSymbolAnEscaper($character, $tokens, $code)) {
                 $isEscaped = !$isEscaped;
-            } else if ($this->isSymbolAFilterSeparator($character, $tokens, $code)) {
+            } elseif ($this->isSymbolAFilterSeparator($character, $tokens, $code)) {
                 if (!$isInString) {
                     return implode($response);
                 }
@@ -1126,7 +1241,7 @@ class Compiler
     {
         $response = array();
         $arguments = $this->rtrimFilters($arguments, $tokens, $code);
-        preg_match_all('/(([a-zA-Z0-9_]+)|("(?:[^"\\\\]|\\\\.)*"))/', $arguments, $arguments);
+        preg_match_all('/(([a-zA-Z0-9_\.]+)|("(?:[^"\\\\]|\\\\.)*"))/', $arguments, $arguments);
         $arguments = $arguments[0];
         return $arguments;
     }
